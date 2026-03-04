@@ -4,9 +4,7 @@ from models import Base
 
 # Створюємо асинхронний рушій БД
 # Важливо: URL має починатися з postgresql+asyncpg://
-# asyncpg не підтримує параметр sslmode=require у рядку підключення, тому ми його видаляємо
-clean_db_url = settings.DATABASE_URL.replace("?sslmode=require", "")
-engine = create_async_engine(clean_db_url, echo=False)
+engine = create_async_engine(settings.DATABASE_URL, echo=False)
 
 # Фабрика сесій
 AsyncSessionLocal = async_sessionmaker(
