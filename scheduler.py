@@ -2,7 +2,6 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
-from main import bot
 from database import AsyncSessionLocal
 from models import Word
 from config import settings
@@ -17,7 +16,7 @@ REVIEW_INTERVALS = {
     5: timedelta(days=30),
 }
 
-async def check_words_for_review():
+async def check_words_for_review(bot):
     """Фонова задача для перевірки слів, які настав час повторювати."""
     now = datetime.now(timezone.utc)
     
@@ -52,9 +51,9 @@ async def check_words_for_review():
         if words_to_review:
             await session.commit()
 
-def start_scheduler():
+def start_scheduler(bot):
     scheduler = AsyncIOScheduler()
     # Перевіряємо кожні 5 хвилин
-    scheduler.add_job(check_words_for_review, 'interval', minutes=5)
+    scheduler.add_job(check_words_for_review, 'interval', minutes=5, args=[bot])
     scheduler.start()
     return scheduler

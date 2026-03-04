@@ -147,7 +147,7 @@ async def main():
     await init_db()
     
     logger.info("Запуск планувальника...")
-    start_scheduler()
+    start_scheduler(bot)
     
     logger.info("Запуск бота та веб-сервера...")
     # Налаштування dummy сервера для Render (щоб не падав deploy)
