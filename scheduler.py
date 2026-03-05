@@ -21,10 +21,11 @@ async def check_words_for_review(bot):
     now = datetime.now(timezone.utc)
     
     async with AsyncSessionLocal() as session:
-        # Знаходимо слова, які час повторити і які ще не вивчені повністю
+        # Знаходимо слова, які час повторити і які ще не вивчені повністю, і яким ще НЕ відправили тест
         stmt = select(Word).where(
             Word.next_review <= now,
-            Word.is_learned == False
+            Word.is_learned == False,
+            Word.is_waiting_for_review == False
         )
         result = await session.execute(stmt)
         words_to_review = result.scalars().all()
@@ -47,6 +48,10 @@ async def check_words_for_review(bot):
                 reply_markup=keyboard,
                 parse_mode="HTML"
             )
+            
+            # Ставимо прапорець, щоб на наступній ітерації через 5 хв не відправити знову
+            word.is_waiting_for_review = True
+            session.add(word)
             
         if words_to_review:
             await session.commit()

@@ -37,6 +37,9 @@ class Word(Base):
     )
     is_learned: Mapped[bool] = mapped_column(Boolean, default=False)
     
+    # Прапорець, щоб планувальник не спамив одне й те саме слово, поки юзер не відповість
+    is_waiting_for_review: Mapped[bool] = mapped_column(Boolean, default=False)
+    
     added_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), 
         default=lambda: datetime.now(timezone.utc)

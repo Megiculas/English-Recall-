@@ -130,6 +130,8 @@ async def process_review_callback(callback: types.CallbackQuery):
             word.next_review = now + REVIEW_INTERVALS[0]
             msg_text = f"🔄 Нічого страшного, повторимо ще раз через {REVIEW_INTERVALS[0]}.\n\n<b>{word.word.upper()}</b> — {card_data.get('translation', '')}\nПриклад: <i>{card_data.get('example', '')}</i>"
             
+        # Знімаємо прапорець очікування
+        word.is_waiting_for_review = False
         session.add(word)
         await session.commit()
         
