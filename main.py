@@ -144,7 +144,12 @@ import os
 async def dummy_handler(request):
     return web.Response(text="Bot is running!")
 
+from migrate_db import run_migration
+
 async def main():
+    logger.info("Виконання міграції бази даних...")
+    await run_migration()
+    
     logger.info("Ініціалізація бази даних...")
     await init_db()
     
