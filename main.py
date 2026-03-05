@@ -5,7 +5,7 @@ import json
 from aiogram.filters import CommandStart
 from sqlalchemy import select
 from config import settings
-from database import init_db, AsyncSessionLocal
+from database import AsyncSessionLocal, engine
 from models import Word
 from llm import generate_word_card
 
@@ -144,14 +144,22 @@ import os
 async def dummy_handler(request):
     return web.Response(text="Bot is running!")
 
-from migrate_db import run_migration
+from alembic.config import Config
+from alembic import command
+
+async def run_migrations():
+    """Запускає Alembic міграції при старті бота"""
+    def run_upgrade(connection, cfg):
+        cfg.attributes["connection"] = connection
+        command.upgrade(cfg, "head")
+        
+    async with engine.begin() as conn:
+        alembic_cfg = Config("alembic.ini")
+        await conn.run_sync(run_upgrade, alembic_cfg)
 
 async def main():
-    logger.info("Виконання міграції бази даних...")
-    await run_migration()
-    
-    logger.info("Ініціалізація бази даних...")
-    await init_db()
+    logger.info("Виконання міграції бази даних (Alembic)...")
+    await run_migrations()
     
     logger.info("Запуск планувальника...")
     start_scheduler(bot)
@@ -175,3 +183,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         logger.info("Бот зупинений.")
+
