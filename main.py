@@ -72,11 +72,13 @@ async def add_word_handler(message: types.Message):
         
     # Збереження в базу
     async with AsyncSessionLocal() as session:
+        now = datetime.now(timezone.utc)
         new_word = Word(
             user_id=user_id,
             word=input_text.lower(),
             context_given=input_text,
-            llm_response=json.dumps(card_data, ensure_ascii=False)
+            llm_response=json.dumps(card_data, ensure_ascii=False),
+            next_review=now + REVIEW_INTERVALS[0] # Перше повторення через 4 години
         )
         session.add(new_word)
         await session.commit()
