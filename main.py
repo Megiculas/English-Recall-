@@ -7,8 +7,7 @@ from sqlalchemy import select
 from config import settings
 from database import AsyncSessionLocal, engine
 from models import Word
-from llm import generate_word_card
-
+from scheduler import start_scheduler
 # Налаштування логування
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

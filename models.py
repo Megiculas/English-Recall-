@@ -14,6 +14,14 @@ class User(Base):
         DateTime(timezone=True), 
         default=lambda: datetime.now(timezone.utc)
     )
+    
+    # Гейміфікація та статистика
+    last_activity: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+    current_streak: Mapped[int] = mapped_column(Integer, default=0)
+    max_streak: Mapped[int] = mapped_column(Integer, default=0)
 
 class Word(Base):
     __tablename__ = "words"
