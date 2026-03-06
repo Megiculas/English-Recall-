@@ -148,11 +148,25 @@ async def dummy_handler(request):
 
 from alembic.config import Config
 from alembic import command
+from alembic.migration import MigrationContext
+from sqlalchemy import inspect
 
 async def run_migrations():
     """Запускає Alembic міграції при старті бота"""
     def run_upgrade(connection, cfg):
         cfg.attributes["connection"] = connection
+        
+        # Перевіряємо наявність таблиць для уникнення DuplicateTableError
+        inspector = inspect(connection)
+        tables = inspector.get_table_names()
+        
+        context = MigrationContext.configure(connection)
+        current_rev = context.get_current_revision()
+        
+        if current_rev is None and "users" in tables:
+            logger.info("База даних вже містить таблиці. Виконуємо alembic stamp head...")
+            command.stamp(cfg, "head")
+            
         command.upgrade(cfg, "head")
         
     async with engine.begin() as conn:
