@@ -37,6 +37,7 @@ async def generate_word_card(word_input: str) -> str:
                 {"role": "user", "content": f"Опрацюй це слово/фразу: {word_input}"}
             ],
             temperature=0.3,
+            response_format={"type": "json_object"},
         )
         return response.choices[0].message.content.strip()
     except Exception as e:

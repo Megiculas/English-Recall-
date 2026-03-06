@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
-from sqlalchemy import BigInteger, String, DateTime, Integer, Boolean, Text
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy import BigInteger, String, DateTime, Integer, Boolean, Text, UniqueConstraint, Index
+from sqlalchemy.dialects.postgresql import JSONB
 
 class Base(DeclarativeBase):
     pass
@@ -25,8 +25,8 @@ class Word(Base):
     word: Mapped[str] = mapped_column(String, index=True)
     context_given: Mapped[str] = mapped_column(Text, nullable=True) # Як користувач ввів слово (напр. фраза)
     
-    # Згенероване LLM (зберігаємо у форматі JSON-строки для простоти)
-    llm_response: Mapped[str] = mapped_column(Text, nullable=True) 
+    # Згенероване LLM
+    llm_response: Mapped[dict] = mapped_column(JSONB, nullable=True) 
     
     # Інтервальні повторення
     level: Mapped[int] = mapped_column(Integer, default=0) # Рівень від 0 до 6
@@ -43,4 +43,9 @@ class Word(Base):
     added_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), 
         default=lambda: datetime.now(timezone.utc)
+    )
+    
+    __table_args__ = (
+        UniqueConstraint('user_id', 'word', name='uq_word_user_word'),
+        Index('ix_word_user_word', 'user_id', 'word'),
     )
