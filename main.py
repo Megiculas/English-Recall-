@@ -77,9 +77,12 @@ async def main():
     await runner.setup()
     port = int(os.environ.get("PORT", 8080))
     site = web.TCPSite(runner, '0.0.0.0', port)
+    
+    # Запускаємо веб-сервер БЕЗ блокування (не await site.start() напряму)
+    # site.start() повертає корутину, яку ми можемо запустити асинхронно
     await site.start()
     
-    # Запускаємо polling бота
+    # Запускаємо polling бота (це блокувальний виклик, тому він має бути останнім)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
