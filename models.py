@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from sqlalchemy import BigInteger, String, DateTime, Integer, Boolean, Text, UniqueConstraint, Index
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 class Base(DeclarativeBase):
     pass
