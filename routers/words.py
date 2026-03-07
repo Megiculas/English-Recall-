@@ -33,6 +33,105 @@ def get_card_data(word: Word) -> dict:
     return {}
 
 
+def format_card_text(input_text: str, card_data: dict) -> str:
+    """Форматує текст картки для відправки."""
+    return (
+        f"🔤 <b>{input_text.upper()}</b>\n"
+        f"───────────────\n"
+        f"🇺🇦 {card_data.get('translation', '')}\n"
+        f"🗣 {card_data.get('transcription', '')}\n"
+        f"📖 <i>{card_data.get('example', '')}</i>\n"
+        f"🔗 Синоніми: {card_data.get('synonyms', '')}\n"
+        f"⚡️ {card_data.get('tags', '')}"
+    )
+
+
+async def process_new_word(user_id: int, input_text: str, bot=None, source: str = "telegram") -> dict:
+    """
+    Спільна логіка обробки нового слова.
+    Повертає dict: {status, card_data, word_id, response_text, already_exists}
+    """
+    # Перевірка на дублікат
+    async with AsyncSessionLocal() as session:
+        stmt = select(Word).where(
+            Word.user_id == user_id,
+            Word.word.ilike(input_text.lower())
+        )
+        result = await session.execute(stmt)
+        existing_word = result.scalars().first()
+
+        if existing_word:
+            card = get_card_data(existing_word)
+            return {
+                "status": "exists",
+                "card_data": card,
+                "word_id": existing_word.id,
+                "already_exists": True,
+            }
+
+    # Генерація картки через LLM
+    llm_response_json = await generate_word_card(input_text)
+
+    try:
+        card_data = json.loads(llm_response_json)
+    except json.JSONDecodeError:
+        card_data = {
+            "translation": "Помилка парсингу",
+            "transcription": "[-]",
+            "example": "-",
+            "synonyms": "-",
+            "tags": ""
+        }
+
+    # Збереження в базу
+    async with AsyncSessionLocal() as session:
+        user = await session.get(User, user_id)
+        if not user:
+            user = User(id=user_id)
+            session.add(user)
+
+        await update_user_activity(session, user)
+
+        now = datetime.now(timezone.utc)
+        new_word = Word(
+            user_id=user_id,
+            word=input_text.lower(),
+            context_given=input_text,
+            llm_response=card_data,
+            next_review=now + REVIEW_INTERVALS[0]
+        )
+        session.add(new_word)
+        await session.commit()
+        word_id = new_word.id
+
+    response_text = format_card_text(input_text, card_data)
+
+    # Якщо це з API (не з Telegram), відправляємо повідомлення в Telegram
+    if source == "api" and bot:
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✏️ Редагувати", callback_data=f"edit_trans_{word_id}"),
+                InlineKeyboardButton(text="🗑 Видалити", callback_data=f"delete_word_{word_id}")
+            ]
+        ])
+        source_label = "\n\n🌐 <i>Додано з Chrome-розширення</i>"
+        await bot.send_message(
+            chat_id=user_id,
+            text=response_text + source_label,
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
+
+    return {
+        "status": "ok",
+        "card_data": card_data,
+        "word_id": word_id,
+        "response_text": response_text,
+        "already_exists": False,
+    }
+
+
 # ────────────────────────────────────────────
 #  /start
 # ────────────────────────────────────────────
@@ -264,7 +363,7 @@ async def add_word_handler(message: types.Message, state: FSMContext):
     if not input_text:
         return
 
-    # Перевірка на дублікат
+    # Швидка перевірка на дублікат (для миттєвої відповіді)
     async with AsyncSessionLocal() as session:
         stmt = select(Word).where(
             Word.user_id == user_id,
@@ -272,7 +371,6 @@ async def add_word_handler(message: types.Message, state: FSMContext):
         )
         result = await session.execute(stmt)
         existing_word = result.scalars().first()
-
         if existing_word:
             card = get_card_data(existing_word)
             await message.reply(
@@ -284,61 +382,16 @@ async def add_word_handler(message: types.Message, state: FSMContext):
 
     processing_msg = await message.reply("⏳ Аналізую слово та генерую картку...")
 
-    # Генерація картки через LLM
-    llm_response_json = await generate_word_card(input_text)
-
-    try:
-        card_data = json.loads(llm_response_json)
-    except json.JSONDecodeError:
-        card_data = {
-            "translation": "Помилка парсингу",
-            "transcription": "[-]",
-            "example": "-",
-            "synonyms": "-",
-            "tags": ""
-        }
-
-    # Збереження в базу
-    async with AsyncSessionLocal() as session:
-        user = await session.get(User, user_id)
-        if not user:
-            user = User(id=user_id)
-            session.add(user)
-
-        await update_user_activity(session, user)
-
-        now = datetime.now(timezone.utc)
-        new_word = Word(
-            user_id=user_id,
-            word=input_text.lower(),
-            context_given=input_text,
-            llm_response=card_data,
-            next_review=now + REVIEW_INTERVALS[0]
-        )
-        session.add(new_word)
-        await session.commit()
-        # Після commit, new_word.id доступний, бо expire_on_commit=False
-        word_id = new_word.id
-
-    # Форматування та відправка відповіді
-    response_text = (
-        f"🔤 <b>{input_text.upper()}</b>\n"
-        f"───────────────\n"
-        f"🇺🇦 {card_data.get('translation', '')}\n"
-        f"🗣 {card_data.get('transcription', '')}\n"
-        f"📖 <i>{card_data.get('example', '')}</i>\n"
-        f"🔗 Синоніми: {card_data.get('synonyms', '')}\n"
-        f"⚡️ {card_data.get('tags', '')}"
-    )
+    result = await process_new_word(user_id, input_text, source="telegram")
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="✏️ Редагувати", callback_data=f"edit_trans_{word_id}"),
-            InlineKeyboardButton(text="🗑 Видалити", callback_data=f"delete_word_{word_id}")
+            InlineKeyboardButton(text="✏️ Редагувати", callback_data=f"edit_trans_{result['word_id']}"),
+            InlineKeyboardButton(text="🗑 Видалити", callback_data=f"delete_word_{result['word_id']}")
         ]
     ])
 
-    await processing_msg.edit_text(response_text, parse_mode="HTML", reply_markup=keyboard)
+    await processing_msg.edit_text(result["response_text"], parse_mode="HTML", reply_markup=keyboard)
 
 
 # ────────────────────────────────────────────

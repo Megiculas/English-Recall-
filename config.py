@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     OPENROUTER_API_KEY: str
     ALLOWED_USER_ID: int
     LLM_MODEL: str = "stepfun/step-3.5-flash:free"
+    API_SECRET: str = ""
 
     class Config:
         env_file = ".env"
