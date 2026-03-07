@@ -1,13 +1,10 @@
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher, types
-import json
-from aiogram.filters import CommandStart
-from sqlalchemy import select
 from config import settings
-from database import AsyncSessionLocal, engine
-from models import Word
+from database import engine
 from scheduler import start_scheduler
+
 # Налаштування логування
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

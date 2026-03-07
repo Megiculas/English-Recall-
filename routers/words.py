@@ -36,7 +36,7 @@ async def cmd_start(message: types.Message):
         "/delete <слово> - Видалити слово"
     )
 
-@router.message()
+@router.message(F.text, ~F.text.startswith("/"))
 async def add_word_handler(message: types.Message):
     user_id = message.from_user.id
     input_text = message.text.strip()
