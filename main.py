@@ -71,6 +71,10 @@ async def api_add_word(request):
         "word": word,
         "translation": result.get("card_data", {}).get("translation", ""),
         "already_exists": result.get("already_exists", False),
+    }, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type"
     })
 
 from alembic.config import Config
@@ -100,6 +104,14 @@ async def run_migrations():
         alembic_cfg = Config("alembic.ini")
         await conn.run_sync(run_upgrade, alembic_cfg)
 
+async def api_options_handler(request):
+    """Обробка OPTIONS запитів для CORS."""
+    return web.Response(status=204, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type"
+    })
+
 async def main():
     logger.info("Виконання міграції бази даних (Alembic)...")
     await run_migrations()
@@ -112,6 +124,7 @@ async def main():
     app = web.Application()
     app.router.add_get('/', dummy_handler)
     app.router.add_post('/api/word', api_add_word)
+    app.router.add_options('/api/word', api_options_handler)
     
     runner = web.AppRunner(app)
     await runner.setup()
