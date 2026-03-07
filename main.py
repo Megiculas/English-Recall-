@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher, types
+from aiogram.fsm.storage.memory import MemoryStorage
 from config import settings
 from database import engine
 from scheduler import start_scheduler
@@ -11,11 +12,19 @@ logger = logging.getLogger(__name__)
 
 # Ініціалізація бота та диспетчера
 bot = Bot(token=settings.BOT_TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(storage=MemoryStorage())
 
-# Мідлвар для перевірки ALLOWED_USER_ID
+# Мідлвар для перевірки ALLOWED_USER_ID (повідомлення)
 @dp.message.outer_middleware()
 async def check_user_middleware(handler, event: types.Message, data: dict):
+    if event.from_user.id != settings.ALLOWED_USER_ID:
+        await event.answer("Вибачте, цей бот є приватним.")
+        return
+    return await handler(event, data)
+
+# Мідлвар для перевірки ALLOWED_USER_ID (колбеки)
+@dp.callback_query.outer_middleware()
+async def check_callback_user_middleware(handler, event: types.CallbackQuery, data: dict):
     if event.from_user.id != settings.ALLOWED_USER_ID:
         await event.answer("Вибачте, цей бот є приватним.")
         return
@@ -74,10 +83,8 @@ async def main():
     await runner.setup()
     port = int(os.environ.get("PORT", 8080))
     site = web.TCPSite(runner, '0.0.0.0', port)
-    
-    # Запускаємо веб-сервер БЕЗ блокування (не await site.start() напряму)
-    # site.start() повертає корутину, яку ми можемо запустити асинхронно
     await site.start()
+    logger.info(f"Веб-сервер запущений на порту {port}")
     
     # Запускаємо polling бота (це блокувальний виклик, тому він має бути останнім)
     await dp.start_polling(bot)
@@ -87,4 +94,3 @@ if __name__ == "__main__":
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         logger.info("Бот зупинений.")
-
