@@ -12,7 +12,7 @@ from models import Word, User
 from llm import generate_word_card
 from scheduler import REVIEW_INTERVALS
 from states import EditTranslationState
-from utils import update_user_activity, get_pagination_keyboard
+from utils import update_user_activity, get_pagination_keyboard, promote_next_word, graduate_word_if_needed, get_active_count
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -92,17 +92,23 @@ async def process_new_word(user_id: int, input_text: str, bot=None, source: str 
 
         await update_user_activity(session, user)
 
-        now = datetime.now(timezone.utc)
         new_word = Word(
             user_id=user_id,
             word=input_text.lower(),
             context_given=input_text,
             llm_response=card_data,
-            next_review=now + REVIEW_INTERVALS[0]
+            status="inbox" # За замовчуванням у чергу
         )
         session.add(new_word)
+        await session.flush() # Отримати ID
+        
+        # Спробувати відразу активувати, якщо є вільні слоти
+        await promote_next_word(session, user_id)
+        
         await session.commit()
+        
         word_id = new_word.id
+        status = new_word.status
 
     response_text = format_card_text(input_text, card_data)
 
@@ -123,8 +129,13 @@ async def process_new_word(user_id: int, input_text: str, bot=None, source: str 
             reply_markup=keyboard
         )
 
+    status_text = "🔥 В активному навчанні" if status == "active" else "📥 У черзі (Inbox)"
+    
+    response_text = format_card_text(input_text, card_data)
+    response_text += f"\n\nСтатус: <b>{status_text}</b>"
+    
     return {
-        "status": "ok",
+        "status": "success",
         "card_data": card_data,
         "word_id": word_id,
         "response_text": response_text,
@@ -177,34 +188,29 @@ async def cmd_stats(message: types.Message):
         in_progress = total_words - learned_words
 
         now = datetime.now(timezone.utc)
-        due_now = await session.scalar(
-            select(func.count(Word.id)).where(
-                Word.user_id == user_id,
-                Word.is_learned == False,
-                Word.next_review <= now
-            )
+        
+        # Кількість слів у різних статусах
+        inbox_count = await session.scalar(
+            select(func.count(Word.id)).where(Word.user_id == user_id, Word.status == "inbox")
+        ) or 0
+        active_count = await session.scalar(
+            select(func.count(Word.id)).where(Word.user_id == user_id, Word.status == "active")
+        ) or 0
+        backlog_count = await session.scalar(
+            select(func.count(Word.id)).where(Word.user_id == user_id, Word.status == "backlog")
         ) or 0
 
         streak = user.current_streak if user else 0
         max_streak = user.max_streak if user else 0
 
-    # Прогрес бар
-    if total_words > 0:
-        pct = int(learned_words / total_words * 100)
-        filled = pct // 10
-        bar = "█" * filled + "░" * (10 - filled)
-        progress_line = f"📈 Прогрес: [{bar}] {pct}%"
-    else:
-        progress_line = "📈 Прогрес: додай перше слово!"
-
     stats_text = (
         f"📊 <b>Твоя статистика</b>\n"
         f"───────────────\n"
         f"📝 Всього слів: <b>{total_words}</b>\n"
-        f"🎓 Вивчено: <b>{learned_words}</b>\n"
-        f"📚 В процесі: <b>{in_progress}</b>\n"
-        f"⏰ Очікують повторення зараз: <b>{due_now}</b>\n\n"
-        f"{progress_line}\n\n"
+        f"🎓 Вивчено: <b>{learned_words}</b>\n\n"
+        f"📥 У черзі (Inbox): <b>{inbox_count}</b>\n"
+        f"🔥 Активний фокус: <b>{active_count}/{user.active_slots_limit}</b>\n"
+        f"📚 У беклозі (Backlog): <b>{backlog_count}</b>\n\n"
         f"🔥 Стрік: <b>{streak} днів</b>  |  🏆 Рекорд: <b>{max_streak} днів</b>"
     )
     await message.answer(stats_text, parse_mode="HTML")
@@ -348,6 +354,112 @@ async def cmd_practice(message: types.Message):
 
 
 # ────────────────────────────────────────────
+#  /focus
+# ────────────────────────────────────────────
+@router.message(Command("focus"))
+async def cmd_focus(message: types.Message):
+    user_id = message.from_user.id
+    async with AsyncSessionLocal() as session:
+        user = await session.get(User, user_id)
+        active_words = (await session.execute(
+            select(Word).where(Word.user_id == user_id, Word.status == "active").order_by(Word.level.desc())
+        )).scalars().all()
+        
+        inbox_count = await session.scalar(
+            select(func.count(Word.id)).where(Word.user_id == user_id, Word.status == "inbox")
+        ) or 0
+
+    if not active_words:
+        await message.answer(f"📭 Активних слотів немає. У черзі Inbox: {inbox_count} слів.")
+        return
+
+    text = f"🔥 <b>Активний фокус</b> ({len(active_words)}/{user.active_slots_limit})\n"
+    text += "───────────────\n"
+    for w in active_words:
+        text += f"• {w.word.upper()} (рівень {w.level})\n"
+    
+    text += f"\n📥 У черзі Inbox ще {inbox_count} слів."
+    await message.answer(text, parse_mode="HTML")
+
+
+# ────────────────────────────────────────────
+#  /inbox (Швидке сортування черги)
+# ────────────────────────────────────────────
+@router.message(Command("inbox"))
+async def cmd_inbox(message: types.Message):
+    await show_next_inbox_word(message)
+
+async def show_next_inbox_word(message: types.Message, user_id: int = None):
+    if user_id is None: user_id = message.from_user.id
+    
+    async with AsyncSessionLocal() as session:
+        stmt = select(Word).where(Word.user_id == user_id, Word.status == "inbox").order_by(Word.added_at.asc()).limit(1)
+        word = (await session.execute(stmt)).scalars().first()
+        count = await session.scalar(select(func.count(Word.id)).where(Word.user_id == user_id, Word.status == "inbox")) or 0
+
+    if not word:
+        await message.answer("✅ Твій Inbox порожній! Всі слова або в навчанні, або вивчені.")
+        return
+
+    card = get_card_data(word)
+    text = (
+        f"📥 <b>Сортування Inbox</b> ({count} залишилось)\n"
+        f"───────────────\n"
+        f"Слово: <b>{word.word.upper()}</b>\n"
+        f"Переклад: {card.get('translation', '—')}\n\n"
+        f"Що робимо?"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🧠 Вчити (у Фокус)", callback_data=f"inbox_learn_{word.id}"),
+            InlineKeyboardButton(text="✅ Вже знаю", callback_data=f"inbox_already_{word.id}")
+        ],
+        [
+            InlineKeyboardButton(text="🗑 Видалити", callback_data=f"inbox_del_{word.id}"),
+            InlineKeyboardButton(text="➡️ Пропустити", callback_data=f"inbox_skip")
+        ]
+    ])
+    
+    if hasattr(message, "edit_text"):
+        await message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    else:
+        await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+
+@router.callback_query(F.data.startswith("inbox_"))
+async def callback_inbox_action(callback: types.CallbackQuery):
+    parts = callback.data.split("_")
+    action = parts[1]
+    
+    if action == "skip":
+        await show_next_inbox_word(callback.message, callback.from_user.id)
+        return
+
+    word_id = int(parts[2])
+    async with AsyncSessionLocal() as session:
+        word = await session.get(Word, word_id)
+        if not word: 
+            await callback.answer("Слово не знайдено.")
+            return
+
+        if action == "learn":
+            # Спробувати активувати негайно
+            await promote_next_word(session, callback.from_user.id)
+            await callback.answer("Додано в чергу на активацію.")
+        elif action == "already":
+            word.is_learned = True
+            word.status = "backlog" # Вивчені теж вважаються беклогом для статистики
+            await callback.answer("Позначено як вивчене.")
+        elif action == "del":
+            await session.delete(word)
+            await callback.answer("Видалено.")
+            
+        await session.commit()
+    
+    await show_next_inbox_word(callback.message, callback.from_user.id)
+
+
+# ────────────────────────────────────────────
 #  Додавання нового слова (catch-all, лише текст без "/")
 # ────────────────────────────────────────────
 @router.message(F.text, ~F.text.startswith("/"))
@@ -446,6 +558,10 @@ async def process_review_callback(callback: types.CallbackQuery):
 
         word.is_waiting_for_review = False
         session.add(word)
+
+        # ПЕРЕВІРКА ГРАДУАЦІЇ (Internalization)
+        # Якщо слово досягло Level 2 - воно звільняє слот
+        await graduate_word_if_needed(session, word)
 
         user = await session.get(User, callback.from_user.id)
         if user:

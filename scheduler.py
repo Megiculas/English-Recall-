@@ -19,12 +19,12 @@ REVIEW_INTERVALS = {
 }
 
 async def check_words_for_review(bot):
-    """Фонова задача для перевірки слів, які настав час повторювати."""
+    """Фонова задача для індивідуальних нагадувань (тільки для ACTIVE слотів)."""
     try:
         now = datetime.now(timezone.utc)
         
-        # 1. Скидання завислих карток (24 год без відповіді)
         async with AsyncSessionLocal() as session:
+            # 1. Скидання завислих карток
             stale_threshold = now - timedelta(hours=24)
             stmt_stale = select(Word).where(
                 Word.is_waiting_for_review == True,
@@ -32,22 +32,15 @@ async def check_words_for_review(bot):
             )
             stale_result = await session.execute(stmt_stale)
             stale_words = stale_result.scalars().all()
-            
             for word in stale_words:
                 word.is_waiting_for_review = False
                 session.add(word)
-                
             if stale_words:
-                logger.info(f"Скинуто {len(stale_words)} завислих карток")
                 await session.commit()
                 
-        # "Тихі години": 21:00 - 06:00 UTC (приблизно 23:00 - 08:00 Київ)
-        current_utc_hour = now.hour
-        if current_utc_hour >= 21 or current_utc_hour < 6:
-            return
-
-        async with AsyncSessionLocal() as session:
+            # 2. Вибірка тільки ACTIVE слів
             stmt = select(Word).where(
+                Word.status == "active",
                 Word.next_review <= now,
                 Word.is_learned == False,
                 Word.is_waiting_for_review == False
@@ -65,29 +58,69 @@ async def check_words_for_review(bot):
                             InlineKeyboardButton(text="❌ Забув", callback_data=f"review_no_{word.id}")
                         ]
                     ])
-                    
                     await bot.send_message(
                         chat_id=word.user_id,
-                        text=f"🕐 Час повторити: <b>{word.word.upper()}</b>\n"
-                             f"Ти пам'ятаєш його переклад?",
+                        text=f"🔥 FOCUS: <b>{word.word.upper()}</b>\n"
+                             f"Ти пам'ятаєш переклад?",
                         reply_markup=keyboard,
                         parse_mode="HTML"
                     )
-                    
                     word.is_waiting_for_review = True
                     session.add(word)
                 except Exception as e:
-                    logger.error(f"Помилка відправки review для слова {word.word} (id={word.id}): {e}")
+                    logger.error(f"Помилка відправки review для {word.word}: {e}")
                     continue
-                
             if words_to_review:
                 await session.commit()
     except Exception as e:
         logger.error(f"Помилка в check_words_for_review: {e}")
 
+async def process_batch_reviews(bot):
+    """Щоденна розсилка для BACKLOG слів (о 19:00)."""
+    try:
+        now = datetime.now(timezone.utc)
+        async with AsyncSessionLocal() as session:
+            # Знайти всіх користувачів
+            users_stmt = select(User)
+            users_res = await session.execute(users_stmt)
+            users = users_res.scalars().all()
+            
+            for user in users:
+                # Знайти слова в беклозі для цього користувача
+                stmt = select(Word).where(
+                    Word.user_id == user.id,
+                    Word.status == "backlog",
+                    Word.next_review <= now,
+                    Word.is_learned == False
+                ).limit(20) # Не більше 20 за раз для зручності
+                
+                res = await session.execute(stmt)
+                words = res.scalars().all()
+                
+                if not words: continue
+                
+                text = "📚 <b>Вечірній Backlog-повтор</b>\n"
+                text += "Час освіжити ці старіші слова:\n\n"
+                for w in words:
+                    text += f"• <b>{w.word.upper()}</b>\n"
+                
+                text += "\nНатисни /practice щоб повторити їх зараз!"
+                
+                try:
+                    await bot.send_message(chat_id=user.id, text=text, parse_mode="HTML")
+                    # Для беклогу ми просто нагадуємо, не ставимо is_waiting_for_review
+                except Exception: continue
+                
+    except Exception as e:
+        logger.error(f"Помилка в process_batch_reviews: {e}")
+
 def start_scheduler(bot):
     scheduler = AsyncIOScheduler()
+    # Кожні 5 хвилин для активних слотів
     scheduler.add_job(check_words_for_review, 'interval', minutes=5, args=[bot])
+    # Щодня о 19:00 для беклогу
+    scheduler.add_job(process_batch_reviews, 'cron', hour=19, minute=0, args=[bot])
+    
     scheduler.start()
-    logger.info("Планувальник запущений (інтервал: 5 хв)")
+    logger.info("Планувальник (Funnel) запущений")
     return scheduler

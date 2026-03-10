@@ -1,5 +1,5 @@
-from datetime import datetime, timezone
-from sqlalchemy import BigInteger, String, DateTime, Integer, Boolean, Text, UniqueConstraint, Index
+from datetime import datetime, timezone, time
+from sqlalchemy import BigInteger, String, DateTime, Integer, Boolean, Text, UniqueConstraint, Index, Time
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -24,6 +24,10 @@ class User(Base):
     current_streak: Mapped[int] = mapped_column(Integer, default=0)
     max_streak: Mapped[int] = mapped_column(Integer, default=0)
 
+    # Налаштування воронки (Learning Funnel)
+    active_slots_limit: Mapped[int] = mapped_column(Integer, default=10)
+    batch_review_time: Mapped[time] = mapped_column(Time, default=time(19, 0)) # 19:00 за замовчуванням
+
 class Word(Base):
     __tablename__ = "words"
     
@@ -32,13 +36,16 @@ class Word(Base):
     
     # Основні дані
     word: Mapped[str] = mapped_column(String, index=True)
-    context_given: Mapped[str] = mapped_column(Text, nullable=True) # Як користувач ввів слово (напр. фраза)
+    context_given: Mapped[str] = mapped_column(Text, nullable=True)
     
     # Згенероване LLM
     llm_response: Mapped[dict] = mapped_column(JSONB, nullable=True) 
     
+    # Статус у воронці: 'inbox', 'active', 'backlog'
+    status: Mapped[str] = mapped_column(String, default="inbox", index=True)
+    
     # Інтервальні повторення
-    level: Mapped[int] = mapped_column(Integer, default=0) # Рівень від 0 до 6
+    level: Mapped[int] = mapped_column(Integer, default=0) 
     next_review: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), 
         default=lambda: datetime.now(timezone.utc), 
@@ -46,7 +53,6 @@ class Word(Base):
     )
     is_learned: Mapped[bool] = mapped_column(Boolean, default=False)
     
-    # Прапорець, щоб планувальник не спамив одне й те саме слово, поки юзер не відповість
     is_waiting_for_review: Mapped[bool] = mapped_column(Boolean, default=False)
     
     added_at: Mapped[datetime] = mapped_column(
@@ -57,4 +63,5 @@ class Word(Base):
     __table_args__ = (
         UniqueConstraint('user_id', 'word', name='uq_word_user_word'),
         Index('ix_word_user_word', 'user_id', 'word'),
+        Index('ix_word_user_status', 'user_id', 'status'),
     )
