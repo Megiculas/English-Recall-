@@ -443,9 +443,9 @@ async def callback_inbox_action(callback: types.CallbackQuery):
             return
 
         if action == "learn":
-            # Спробувати активувати негайно
-            await promote_next_word(session, callback.from_user.id)
-            await callback.answer("Додано в чергу на активацію.")
+            word.status = "active"
+            word.next_review = datetime.now(timezone.utc)
+            await callback.answer("Слово активовано!")
         elif action == "already":
             word.is_learned = True
             word.status = "backlog" # Вивчені теж вважаються беклогом для статистики
